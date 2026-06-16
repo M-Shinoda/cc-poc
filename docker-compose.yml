@@ -1,0 +1,46 @@
+services:
+  postgres:
+    build: ./postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ccpoc
+      POSTGRES_USER: ccpoc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_cron,pg_partman_bgw
+      -c cron.database_name=ccpoc
+      -c pg_partman_bgw.dbname=ccpoc
+      -c pg_partman_bgw.role=ccpoc
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ccpoc"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  go-core:
+    build: ./go-core
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://ccpoc:${POSTGRES_PASSWORD}@postgres:5432/ccpoc
+      CONFIG_PATH: /config/strategies.yaml
+    volumes:
+      - ./config:/config:ro
+
+  python-analyzer:
+    build: ./python
+    profiles: ["tools"]
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://ccpoc:${POSTGRES_PASSWORD}@postgres:5432/ccpoc
+
+volumes:
+  postgres_data:

@@ -1,0 +1,23 @@
+poll_interval: 1s
+slippage_rate: 0.0001   # 0.01%（取引所の板スプレッド相当）
+fee_rate: 0.0           # 0%（CoinCheck 取引所は現在 Maker/Taker ともに無料）
+price_history_retention_days: 180
+warmup_bars: 500        # 起動時に DB から読み込む価格履歴件数
+
+strategies:
+  - name: ma_cross_5_20
+    type: ma_cross
+    initial_cash: 1000000   # 100万円
+    params:
+      short_period: 5
+      long_period: 20
+      trade_amount: 0.001   # BTC
+
+  - name: rsi_14
+    type: rsi
+    initial_cash: 1000000
+    params:
+      period: 14
+      oversold: 30
+      overbought: 70
+      trade_amount: 0.001   # BTC
