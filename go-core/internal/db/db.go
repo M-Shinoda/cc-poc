@@ -35,6 +35,23 @@ type Portfolio struct {
 	UpdatedAt  time.Time
 }
 
+type PortfolioSummary struct {
+	StrategyName string
+	InitialCash  float64
+	CashJPY      float64
+	BTCAmount    float64
+}
+
+type FilledOrder struct {
+	ID           int64
+	StrategyName string
+	Side         string
+	ExecPrice    float64
+	Amount       float64
+	Fee          float64
+	FilledAt     time.Time
+}
+
 type PriceRecord struct {
 	Pair       string
 	Last       float64
@@ -191,6 +208,69 @@ func (d *DB) GetPendingOrders(ctx context.Context, strategyID int64) ([]*Order, 
 		orders = append(orders, &o)
 	}
 	return orders, rows.Err()
+}
+
+// GetPortfolioSummaries returns portfolios joined with strategy name and initial_cash.
+func (d *DB) GetPortfolioSummaries(ctx context.Context) ([]PortfolioSummary, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT s.name, s.initial_cash, p.cash_jpy, p.btc_amount
+		 FROM portfolios p JOIN strategies s ON s.id = p.strategy_id
+		 ORDER BY p.strategy_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []PortfolioSummary
+	for rows.Next() {
+		var ps PortfolioSummary
+		if err := rows.Scan(&ps.StrategyName, &ps.InitialCash, &ps.CashJPY, &ps.BTCAmount); err != nil {
+			return nil, err
+		}
+		result = append(result, ps)
+	}
+	return result, rows.Err()
+}
+
+// GetFilledOrders returns the most recent filled orders across all strategies.
+func (d *DB) GetFilledOrders(ctx context.Context, limit int) ([]FilledOrder, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT o.id, s.name, o.side, o.exec_price, o.amount, COALESCE(o.fee, 0), o.filled_at
+		 FROM orders o JOIN strategies s ON s.id = o.strategy_id
+		 WHERE o.status = 'filled'
+		 ORDER BY o.filled_at DESC
+		 LIMIT $1`,
+		limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []FilledOrder
+	for rows.Next() {
+		var fo FilledOrder
+		if err := rows.Scan(&fo.ID, &fo.StrategyName, &fo.Side,
+			&fo.ExecPrice, &fo.Amount, &fo.Fee, &fo.FilledAt); err != nil {
+			return nil, err
+		}
+		result = append(result, fo)
+	}
+	return result, rows.Err()
+}
+
+// GetLastBuyPrice returns the exec_price of the most recent filled BUY order.
+// Returns 0, nil when no filled BUY order exists yet.
+func (d *DB) GetLastBuyPrice(ctx context.Context, strategyID int64) (float64, error) {
+	var price float64
+	err := d.pool.QueryRow(ctx,
+		`SELECT exec_price FROM orders
+		 WHERE strategy_id = $1 AND side = 'BUY' AND status = 'filled'
+		 ORDER BY filled_at DESC LIMIT 1`,
+		strategyID).Scan(&price)
+	if err == pgx.ErrNoRows {
+		return 0, nil
+	}
+	return price, err
 }
 
 // CountFilledOrders returns the number of filled orders for a strategy.

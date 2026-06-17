@@ -2,10 +2,12 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 
 	"cc-poc/internal/db"
+	"cc-poc/internal/hub"
 )
 
 type Executor struct {
@@ -13,14 +15,35 @@ type Executor struct {
 	slippageRate float64
 	feeRate      float64
 	pending      map[int64][]*db.Order // keyed by strategy ID
+	hub          *hub.Hub
+	names        map[int64]string
 }
 
-func NewExecutor(database *db.DB, slippageRate, feeRate float64) *Executor {
+func NewExecutor(database *db.DB, slippageRate, feeRate float64, h *hub.Hub) *Executor {
 	return &Executor{
 		db:           database,
 		slippageRate: slippageRate,
 		feeRate:      feeRate,
 		pending:      make(map[int64][]*db.Order),
+		hub:          h,
+		names:        make(map[int64]string),
+	}
+}
+
+func (e *Executor) RegisterStrategy(id int64, name string) {
+	e.names[id] = name
+}
+
+func (e *Executor) broadcastFill(strategyID int64, side string, execPrice, amount float64) {
+	if e.hub == nil {
+		return
+	}
+	msg, err := json.Marshal(map[string]any{
+		"type": "fill", "strategy": e.names[strategyID],
+		"side": side, "exec_price": execPrice, "amount": amount,
+	})
+	if err == nil {
+		e.hub.Broadcast(msg)
 	}
 }
 
@@ -62,6 +85,7 @@ func (e *Executor) CheckPending(ctx context.Context, event PriceEvent) {
 				remaining = append(remaining, o)
 				continue
 			}
+			e.broadcastFill(strategyID, o.Side, execPrice, o.Amount)
 			slog.Info("limit order filled",
 				"strategy_id", strategyID,
 				"order_id", o.ID,
@@ -90,6 +114,7 @@ func (e *Executor) fillMarket(ctx context.Context, strategyID int64, req *OrderR
 		slog.Error("fill market order failed", "strategy_id", strategyID, "side", req.Side, "error", err)
 		return
 	}
+	e.broadcastFill(strategyID, req.Side, execPrice, req.Amount)
 	slog.Info("market order filled",
 		"strategy_id", strategyID,
 		"side", req.Side,

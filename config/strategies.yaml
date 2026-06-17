@@ -11,7 +11,15 @@ strategies:
     params:
       short_period: 5
       long_period: 20
-      trade_amount: 0.001   # BTC
+      trade_amount: 0.001   # BTC]
+
+  - name: ma_cross_5_15
+    type: ma_cross
+    initial_cash: 100000   # 100万円
+    params:
+      short_period: 5
+      long_period: 15
+      trade_amount: 0.003   # BTC
 
   - name: rsi_14
     type: rsi

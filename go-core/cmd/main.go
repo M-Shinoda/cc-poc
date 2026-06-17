@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,11 +11,13 @@ import (
 	"syscall"
 	"time"
 
+	"cc-poc/internal/api"
 	"cc-poc/internal/config"
 	"cc-poc/internal/db"
 	"cc-poc/internal/engine"
 	"cc-poc/internal/feed"
 	"cc-poc/internal/health"
+	"cc-poc/internal/hub"
 	"cc-poc/internal/reporter"
 	"cc-poc/internal/strategy"
 )
@@ -58,7 +61,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	executor := engine.NewExecutor(database, cfg.SlippageRate, cfg.FeeRate)
+	h := hub.New()
+	executor := engine.NewExecutor(database, cfg.SlippageRate, cfg.FeeRate, h)
+	for i, s := range strategies {
+		executor.RegisterStrategy(strategyIDs[i], s.Name())
+	}
 	if err := executor.LoadPending(ctx, strategyIDs); err != nil {
 		slog.Error("load pending orders", "error", err)
 		os.Exit(1)
@@ -67,9 +74,10 @@ func main() {
 	rep := reporter.NewConsole(database, 30*time.Second)
 	tracker := health.NewTracker()
 
-	// Start health HTTP server
+	// Start HTTP server (health + dashboard)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", tracker.Handler())
+	api.New(database, h).Register(mux)
 	srv := &http.Server{Addr: ":8080", Handler: mux}
 	go func() {
 		slog.Info("health server listening", "addr", ":8080")
@@ -124,6 +132,13 @@ func main() {
 				RecordedAt: t.RecordedAt,
 			}
 
+			// Broadcast price to dashboard clients
+			if msg, err := json.Marshal(map[string]any{
+				"type": "price", "last": t.Last, "bid": t.Bid, "ask": t.Ask,
+			}); err == nil {
+				h.Broadcast(msg)
+			}
+
 			// Check pending limit orders
 			executor.CheckPending(ctx, event)
 
@@ -175,22 +190,36 @@ func buildStrategies(ctx context.Context, cfg *config.Config, database *db.DB) (
 			return nil, nil, fmt.Errorf("portfolio %q: %w", sc.Name, err)
 		}
 
+		var lastBuyPrice float64
+		if portfolio.BTCAmount > 0 {
+			lastBuyPrice, err = database.GetLastBuyPrice(ctx, id)
+			if err != nil {
+				slog.Warn("get last buy price failed", "strategy", sc.Name, "error", err)
+			}
+		}
+
 		var s strategy.Strategy
 		switch sc.Type {
 		case "ma_cross":
 			short := config.GetInt(sc.Params, "short_period", 5)
 			long := config.GetInt(sc.Params, "long_period", 20)
 			amount := config.GetFloat(sc.Params, "trade_amount", 0.001)
-			ms := strategy.NewMACross(id, sc.Name, short, long, amount)
+			ms := strategy.NewMACross(id, sc.Name, short, long, amount, cfg.SlippageRate, cfg.FeeRate)
 			ms.SetPosition(portfolio.BTCAmount)
+			if lastBuyPrice > 0 {
+				ms.SetCostBasis(lastBuyPrice)
+			}
 			s = ms
 		case "rsi":
 			period := config.GetInt(sc.Params, "period", 14)
 			oversold := config.GetFloat(sc.Params, "oversold", 30)
 			overbought := config.GetFloat(sc.Params, "overbought", 70)
 			amount := config.GetFloat(sc.Params, "trade_amount", 0.001)
-			rs := strategy.NewRSI(id, sc.Name, period, oversold, overbought, amount)
+			rs := strategy.NewRSI(id, sc.Name, period, oversold, overbought, amount, cfg.SlippageRate, cfg.FeeRate)
 			rs.SetPosition(portfolio.BTCAmount)
+			if lastBuyPrice > 0 {
+				rs.SetCostBasis(lastBuyPrice)
+			}
 			s = rs
 		default:
 			return nil, nil, fmt.Errorf("unknown strategy type %q", sc.Type)

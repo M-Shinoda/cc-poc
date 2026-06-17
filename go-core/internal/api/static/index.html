@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CoinCheck Paper Trader</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;min-height:100vh}
+header{display:flex;align-items:center;gap:16px;padding:14px 24px;background:#161b22;border-bottom:1px solid #30363d;position:sticky;top:0;z-index:10}
+h1{font-size:16px;font-weight:600;color:#8b949e;white-space:nowrap}
+#status{font-size:11px;padding:3px 10px;border-radius:9999px;white-space:nowrap;transition:all .3s}
+.live{background:#0d2a1c;color:#3fb950}
+.off{background:#2a0d0d;color:#f85149}
+#price-wrap{margin-left:auto;text-align:right}
+#price-wrap .label{font-size:11px;color:#8b949e;display:block}
+#price{font-size:26px;font-weight:700;color:#58a6ff;letter-spacing:-0.5px}
+main{padding:24px;display:grid;gap:24px;max-width:1400px;margin:0 auto}
+section h2{font-size:11px;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}
+th{padding:10px 14px;color:#8b949e;font-weight:500;text-align:right;border-bottom:1px solid #30363d;background:#161b22}
+th:first-child{text-align:left}
+td{padding:9px 14px;text-align:right;border-bottom:1px solid #21262d}
+td:first-child{text-align:left;color:#e6edf3}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#1c2128}
+.buy{color:#3fb950}
+.sell{color:#f85149}
+.pos{color:#3fb950}
+.neg{color:#f85149}
+.neutral{color:#8b949e}
+#updated{font-size:11px;color:#8b949e;margin-left:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>CoinCheck Paper Trader</h1>
+  <span id="status" class="off">● 接続中...</span>
+  <span id="updated"></span>
+  <div id="price-wrap">
+    <span class="label">BTC / JPY</span>
+    <span id="price">—</span>
+  </div>
+</header>
+<main>
+  <section>
+    <h2>ポートフォリオ</h2>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>戦略</th>
+            <th>現金 (JPY)</th>
+            <th>BTC保有量</th>
+            <th>BTC評価額</th>
+            <th>合計資産</th>
+            <th>損益</th>
+            <th>損益率</th>
+          </tr>
+        </thead>
+        <tbody id="portfolio-body">
+          <tr><td colspan="7" style="text-align:center;color:#8b949e;padding:24px">読み込み中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>取引履歴</h2>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>日時</th>
+            <th>戦略</th>
+            <th>売買</th>
+            <th>約定価格</th>
+            <th>数量 (BTC)</th>
+            <th>手数料 (JPY)</th>
+          </tr>
+        </thead>
+        <tbody id="orders-body">
+          <tr><td colspan="6" style="text-align:center;color:#8b949e;padding:24px">読み込み中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+let currentPrice = 0;
+let portfolio = [];
+
+const jpy = n => '¥' + Math.round(n).toLocaleString('ja-JP');
+const pct = n => (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+const btc = n => n.toFixed(8);
+const cls = n => n > 0 ? 'pos' : n < 0 ? 'neg' : 'neutral';
+
+function renderPortfolio() {
+  if (!portfolio.length) return;
+  const tbody = document.getElementById('portfolio-body');
+  tbody.innerHTML = portfolio.map(p => {
+    const btcVal = p.btc_amount * currentPrice;
+    const total = p.cash_jpy + btcVal;
+    const pnl = total - p.initial_cash;
+    const pnlPct = p.initial_cash > 0 ? pnl / p.initial_cash * 100 : 0;
+    const c = cls(pnl);
+    return `<tr>
+      <td>${p.strategy}</td>
+      <td>${jpy(p.cash_jpy)}</td>
+      <td>${btc(p.btc_amount)}</td>
+      <td>${currentPrice > 0 ? jpy(btcVal) : '—'}</td>
+      <td>${currentPrice > 0 ? jpy(total) : '—'}</td>
+      <td class="${c}">${currentPrice > 0 ? (pnl >= 0 ? '+' : '') + jpy(Math.abs(pnl)).replace('¥','¥') + (pnl < 0 ? '' : '') : '—'}</td>
+      <td class="${c}">${currentPrice > 0 ? pct(pnlPct) : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPnl(pnl) {
+  return (pnl >= 0 ? '+¥' : '-¥') + Math.abs(Math.round(pnl)).toLocaleString('ja-JP');
+}
+
+function renderPortfolioFull() {
+  if (!portfolio.length) return;
+  const tbody = document.getElementById('portfolio-body');
+  tbody.innerHTML = portfolio.map(p => {
+    const btcVal = p.btc_amount * currentPrice;
+    const total = p.cash_jpy + btcVal;
+    const pnl = total - p.initial_cash;
+    const pnlPct = p.initial_cash > 0 ? pnl / p.initial_cash * 100 : 0;
+    const c = cls(pnl);
+    return `<tr>
+      <td>${p.strategy}</td>
+      <td>${jpy(p.cash_jpy)}</td>
+      <td>${btc(p.btc_amount)}</td>
+      <td>${currentPrice > 0 ? jpy(btcVal) : '—'}</td>
+      <td>${currentPrice > 0 ? jpy(total) : '—'}</td>
+      <td class="${c}">${currentPrice > 0 ? renderPnl(pnl) : '—'}</td>
+      <td class="${c}">${currentPrice > 0 ? pct(pnlPct) : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadPortfolio() {
+  try {
+    const res = await fetch('/api/portfolio');
+    portfolio = await res.json() || [];
+    renderPortfolioFull();
+  } catch(e) { console.error('portfolio fetch failed', e); }
+}
+
+async function loadOrders() {
+  try {
+    const res = await fetch('/api/orders?limit=50');
+    const orders = await res.json() || [];
+    const tbody = document.getElementById('orders-body');
+    if (!orders.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e;padding:24px">取引履歴なし</td></tr>';
+      return;
+    }
+    tbody.innerHTML = orders.map(o => {
+      const dt = new Date(o.filled_at).toLocaleString('ja-JP', {
+        month:'2-digit', day:'2-digit',
+        hour:'2-digit', minute:'2-digit', second:'2-digit'
+      });
+      const c = o.side === 'BUY' ? 'buy' : 'sell';
+      return `<tr>
+        <td>${dt}</td>
+        <td>${o.strategy}</td>
+        <td class="${c}">${o.side}</td>
+        <td>${jpy(o.exec_price)}</td>
+        <td>${btc(o.amount)}</td>
+        <td>${jpy(o.fee)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error('orders fetch failed', e); }
+}
+
+function connect() {
+  const statusEl = document.getElementById('status');
+  const priceEl = document.getElementById('price');
+  const updatedEl = document.getElementById('updated');
+  const es = new EventSource('/events');
+
+  es.onopen = () => {
+    statusEl.textContent = '● LIVE';
+    statusEl.className = 'live';
+  };
+
+  es.onerror = () => {
+    statusEl.textContent = '● 切断中';
+    statusEl.className = 'off';
+    priceEl.textContent = '—';
+    es.close();
+    setTimeout(connect, 3000);
+  };
+
+  es.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'price') {
+      currentPrice = msg.last;
+      priceEl.textContent = jpy(msg.last);
+      const now = new Date().toLocaleTimeString('ja-JP');
+      updatedEl.textContent = now + ' 更新';
+      renderPortfolioFull();
+    } else if (msg.type === 'fill') {
+      loadOrders();
+      loadPortfolio();
+    }
+  };
+}
+
+loadPortfolio();
+loadOrders();
+connect();
+</script>
+</body>
+</html>

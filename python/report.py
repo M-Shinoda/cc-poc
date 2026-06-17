@@ -84,9 +84,33 @@ def print_summary(portfolios: pd.DataFrame, strategies: pd.DataFrame, current_pr
     print(tabulate(rows, headers="keys", tablefmt="rounded_outline"))
 
 
-def print_trade_stats(orders: pd.DataFrame):
+def print_trade_history(orders: pd.DataFrame):
     if orders.empty:
         print("\n取引履歴なし")
+        return
+
+    rows = []
+    for _, o in orders.iterrows():
+        filled_at = o["filled_at"]
+        if hasattr(filled_at, "strftime"):
+            filled_at = filled_at.strftime("%Y-%m-%d %H:%M:%S")
+        rows.append({
+            "ID": o["id"],
+            "Strategy": o["strategy_name"],
+            "Side": o["side"],
+            "Amount (BTC)": f"{o['amount']:.8f}",
+            "Exec Price": f"¥{o['exec_price']:,.0f}",
+            "Fee (JPY)": f"¥{o['fee']:,.2f}",
+            "Filled At": filled_at,
+        })
+
+    print(f"\n{'─'*60}")
+    print("  売買履歴一覧")
+    print(tabulate(rows, headers="keys", tablefmt="rounded_outline"))
+
+
+def print_trade_stats(orders: pd.DataFrame):
+    if orders.empty:
         return
 
     stats = []
@@ -162,6 +186,7 @@ def main():
     current_price = float(prices["last"].iloc[-1]) if not prices.empty else 0.0
 
     print_summary(portfolios, strategies, current_price)
+    print_trade_history(orders)
     print_trade_stats(orders)
 
     if args.chart:

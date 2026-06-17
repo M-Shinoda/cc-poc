@@ -46,9 +46,6 @@ func Load(path string) (*Config, error) {
 	if cfg.SlippageRate == 0 {
 		cfg.SlippageRate = 0.0005
 	}
-	if cfg.FeeRate == 0 {
-		cfg.FeeRate = 0.001
-	}
 	if cfg.PriceHistoryRetentionDays == 0 {
 		cfg.PriceHistoryRetentionDays = 180
 	}

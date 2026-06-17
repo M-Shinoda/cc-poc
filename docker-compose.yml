@@ -33,6 +33,8 @@ services:
       CONFIG_PATH: /config/strategies.yaml
     volumes:
       - ./config:/config:ro
+    ports:
+      - "8080:8080"
 
   python-analyzer:
     build: ./python
